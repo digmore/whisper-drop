@@ -17,10 +17,13 @@ Drag-and-drop local transcription for audio and video files. An Electron front e
   - `intro.mp3` and `intro.mp4` in the same folder are saved as `intro.mp3.srt` / `intro.mp4.srt`
 - Optional **screenshots** for video files (needs Autosave): stills are saved to `<name>_shots/` and a
   Markdown transcript `<name>.md` interleaves them with the speech (the `.srt`/`.vtt`/`.txt` is still written too)
-  - **Slides**: capture on big visual changes. **Screen recording**: also on small changes (typing, new windows,
-    plus a safety-net capture every 60 s). **Every N seconds**: fixed interval.
-  - A still is taken once the picture has held still for about a second, so mid-transition frames are skipped;
-    captures are at least 2 s apart. Images are JPEGs, at most 1600 px wide.
+  - **Slides**: capture on big visual changes. **Screen recording**: also on smaller ones (menus, dialogs, new
+    windows; a single added line of text is below the threshold), plus a once-a-minute safety net that only fires
+    if something subtle changed. **Every N seconds**: fixed interval.
+  - A still is taken once the picture has held still for a moment, so mid-transition frames are skipped.
+    Images are JPEGs, at most 1600 px wide.
+  - A capture is skipped if the screen is back to something already captured (a popup closing, revisiting an
+    earlier slide), so the same picture is not repeated
   - Each image is placed just before the passage being spoken when it was captured
   - Audio-only files are unaffected. Analysis runs on the CPU while the GPU transcribes
   - The sensitivity presets are untuned starting points (see `PRESETS` in `src/screenshots.js`); constantly

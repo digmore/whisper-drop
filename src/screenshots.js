@@ -21,8 +21,13 @@ const N = W * H;
 //   maxGap      safety net: capture at least this often even if nothing changed (seconds)
 const PRESETS = {
   slides: { delta: 24, frac: 0.04, stableFrac: 0.003, settle: 1, maxWait: 8, minGap: 2, maxGap: Infinity },
-  screen: { delta: 16, frac: 0.006, stableFrac: 0.002, settle: 1, maxWait: 8, minGap: 2, maxGap: 60 },
+  screen: { delta: 16, frac: 0.02, stableFrac: 0.002, settle: 2, maxWait: 8, minGap: 4, maxGap: 60 },
 };
+
+// The maxGap safety net uses a much finer comparison than normal change detection, and only fires
+// if something really did change. Otherwise a static screen would yield a copy of itself every minute.
+const FINE_DELTA = 8;
+const FINE_FRAC = 0.001;
 
 function track(active, proc) {
   active?.procs.add(proc);
@@ -73,24 +78,27 @@ function planScene(ffmpegPath, file, duration, p, active, onProgress) {
     track(active, proc);
 
     const shots = [];
-    let ref = null; // last kept frame
+    const kept = []; // every frame we have captured; new candidates are checked against all of them
+    let ref = null; // the state the viewer last saw: the last kept frame, or a later look-alike of an older one
     let prev = null;
     let pending = null; // { since, stableFrom, forced }
     let lastShot = -Infinity;
+    let nextForcedAt = p.maxGap; // earliest time the safety net may look again
     let lastDRef = 0;
     let k = -1;
     let buf = Buffer.alloc(0);
     let lastPct = -1;
     let err = '';
 
-    const frac = (a, b) => {
+    const fracAt = (a, b, delta) => {
       let c = 0;
       for (let i = 0; i < N; i++) {
         const d = a[i] - b[i];
-        if (d > p.delta || -d > p.delta) c++;
+        if (d > delta || -d > delta) c++;
       }
       return c / N;
     };
+    const frac = (a, b) => fracAt(a, b, p.delta);
 
     const step = (f) => {
       const t = ++k;
@@ -98,8 +106,13 @@ function planScene(ffmpegPath, file, duration, p, active, onProgress) {
       const dPrev = prev ? frac(f, prev) : 1;
       lastDRef = dRef;
       if (!pending) {
-        if (dRef > p.frac) pending = { since: t, stableFrom: t, forced: false };
-        else if (t - lastShot >= p.maxGap) pending = { since: t, stableFrom: t, forced: true };
+        if (dRef > p.frac) {
+          pending = { since: t, stableFrom: t, forced: false };
+        } else if (t >= nextForcedAt) {
+          // Safety net: only worth a capture if something below the normal threshold changed.
+          if (ref && fracAt(f, ref, FINE_DELTA) > FINE_FRAC) pending = { since: t, stableFrom: t, forced: true };
+          else nextForcedAt = t + p.maxGap;
+        }
       } else if (dPrev > p.stableFrac) {
         pending.stableFrom = t; // still moving: restart the stillness clock
       }
@@ -109,11 +122,18 @@ function planScene(ffmpegPath, file, duration, p, active, onProgress) {
         if (stableFor >= p.settle || waited >= p.maxWait) {
           if (!pending.forced && ref && dRef <= p.frac) {
             pending = null; // flickered and came back: nothing new to show
+          } else if (!pending.forced && kept.some((old) => frac(f, old) <= p.frac)) {
+            // Back to something we already captured (popup closed, returned to an earlier slide):
+            // don't repeat the image, but measure future changes from this state.
+            ref = f;
+            pending = null;
           } else if (t - lastShot >= p.minGap) {
             const ts = stableFor >= p.settle ? pending.stableFrom : t;
             shots.push(ts);
+            kept.push(f);
             lastShot = ts;
             ref = f;
+            nextForcedAt = ts + p.maxGap;
             pending = null;
           }
         }
@@ -138,7 +158,9 @@ function planScene(ffmpegPath, file, duration, p, active, onProgress) {
     proc.on('close', (code) => {
       if (active?.cancelled) return resolve(shots);
       if (pending && (pending.forced || lastDRef > p.frac) && k - lastShot >= p.minGap) {
-        shots.push(pending.stableFrom); // video ended while still waiting to settle
+        // Video ended while still waiting to settle. Skip it if it only repeats an earlier capture.
+        const last = prev;
+        if (pending.forced || !last || !kept.some((old) => frac(last, old) <= p.frac)) shots.push(pending.stableFrom);
       }
       if (code !== 0 && k < 0) return reject(new Error('video analysis failed: ' + err.trim().split('\n').pop()));
       resolve(shots);
