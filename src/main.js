@@ -257,20 +257,16 @@ ipcMain.handle('transcribe', async (_e, { id, filePath, relDir, outName }) => {
   const settings = loadSettings();
   const send = (phase, pct = null) => win?.webContents.send('progress', { id, phase, pct });
 
-  // Screenshots only apply to files with a real video stream, and need autosave for a destination.
+  // Markdown is the only format that can show screenshots, so they apply only when .md is the
+  // chosen autosave format, and only to files with a real video stream.
+  const wantMd = settings.autosave && settings.format === 'md';
   let info = null;
-  if (settings.autosave && settings.screenshots) info = await shots.probe(ffmpegPath, filePath).catch(() => null);
+  if (wantMd && settings.screenshots) info = await shots.probe(ffmpegPath, filePath).catch(() => null);
   const doShots = !!info?.hasVideo;
 
   if (settings.autosave && settings.skipExisting) {
     const t = targetFor(filePath, settings.format, settings.outputDir, relDir, outName);
-    if (fs.existsSync(t.file)) {
-      // A transcript from an earlier run without screenshots must not block capturing them now.
-      const md = targetFor(filePath, 'md', settings.outputDir, relDir, outName);
-      if (!doShots || fs.existsSync(md.file)) {
-        return { ok: true, skipped: true, savedTo: t.file, segments: [], text: '' };
-      }
-    }
+    if (fs.existsSync(t.file)) return { ok: true, skipped: true, savedTo: t.file, segments: [], text: '' };
   }
   const tmp = path.join(os.tmpdir(), `whisper-drop-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
   const active = {
@@ -317,7 +313,7 @@ ipcMain.handle('transcribe', async (_e, { id, filePath, relDir, outName }) => {
     active.phase = 'shots';
 
     const out = { ok: true, ...result, savedTo: null };
-    if (settings.autosave) {
+    if (settings.autosave && !wantMd) {
       try {
         out.savedTo = await autosave(
           filePath, settings.format, result, settings.outputDir, relDir, outName, settings.skipExisting
@@ -326,15 +322,26 @@ ipcMain.handle('transcribe', async (_e, { id, filePath, relDir, outName }) => {
         out.saveError = e.message;
       }
     }
-    if (doShots) {
+    if (wantMd) {
       try {
-        send('analyze', active.analysisPct);
-        const times = await plan;
-        if (active.cancelled) return { ok: false, cancelled: true };
-        Object.assign(out, await writeShotsAndMarkdown(filePath, result, times, settings, relDir, outName, active, send));
+        let times = [];
+        if (doShots) {
+          try {
+            send('analyze', active.analysisPct);
+            times = await plan;
+          } catch (e) {
+            if (active.cancelled) return { ok: false, cancelled: true };
+            out.shotsError = e.message; // still write the text-only Markdown
+          }
+          if (active.cancelled) return { ok: false, cancelled: true };
+        }
+        const md = await writeMarkdown(filePath, result, times, settings, relDir, outName, active, send);
+        out.savedTo = md.mdPath;
+        out.shotCount = md.shotCount;
+        out.shotsError = out.shotsError || md.shotsError;
       } catch (e) {
         if (active.cancelled) return { ok: false, cancelled: true };
-        out.shotsError = e.message;
+        out.saveError = e.message;
       }
     }
     return out;
@@ -368,9 +375,10 @@ ipcMain.handle('cancel', async () => {
   return true;
 });
 
-// Captures the stills, then writes <name>.md next to the other transcripts with the images in
-// <name>_shots/. Both names are made unique together; a failed capture removes the partial folder.
-async function writeShotsAndMarkdown(filePath, result, times, settings, relDir, outName, active, send) {
+// Writes <name>.md, with the captured stills (if any times were planned) in <name>_shots/. The
+// names are made unique together. If capturing fails the partial folder is removed and the text-only
+// Markdown is still written, with the failure reported; cancelling aborts everything.
+async function writeMarkdown(filePath, result, times, settings, relDir, outName, active, send) {
   const t = targetFor(filePath, 'md', settings.outputDir, relDir, outName);
   await fs.promises.mkdir(t.dir, { recursive: true });
   let base = t.base;
@@ -378,25 +386,42 @@ async function writeShotsAndMarkdown(filePath, result, times, settings, relDir, 
   for (let n = 1; taken(base); n++) base = `${t.base} (${n})`;
   const shotsDirName = `${base}_shots`;
   const shotsDir = path.join(t.dir, shotsDirName);
+  const cleanup = () => fs.promises.rm(shotsDir, { recursive: true, force: true }).catch(() => {});
+
+  let captured = [];
+  let shotsError = null;
+  if (times.length) {
+    try {
+      captured = await shots.captureShots(
+        ffmpegPath, filePath, times, shotsDir, t.base, active, (pct) => send('shots', pct)
+      );
+    } catch (e) {
+      await cleanup();
+      if (active?.cancelled) throw e;
+      captured = [];
+      shotsError = e.message;
+    }
+    if (!captured.length) await cleanup(); // never leave an empty folder behind
+  }
   try {
-    const captured = await shots.captureShots(
-      ffmpegPath, filePath, times, shotsDir, t.base, active, (pct) => send('shots', pct)
-    );
-    const md = shots.buildMarkdown({
-      title: t.base,
-      sourceName: path.basename(filePath),
-      segments: result.segments,
-      text: result.text,
-      shots: captured,
-      shotsDirName,
-    });
     const mdPath = path.join(t.dir, `${base}.md`);
-    await fs.promises.writeFile(mdPath, md, 'utf8');
-    return { mdPath, shotCount: captured.length };
+    await fs.promises.writeFile(mdPath, buildMd(filePath, result, captured, shotsDirName), 'utf8');
+    return { mdPath, shotCount: captured.length, shotsError };
   } catch (e) {
-    await fs.promises.rm(shotsDir, { recursive: true, force: true }).catch(() => {});
+    await cleanup();
     throw e;
   }
+}
+
+function buildMd(sourcePath, result, captured, shotsDirName) {
+  return shots.buildMarkdown({
+    title: path.parse(sourcePath).name,
+    sourceName: path.basename(sourcePath),
+    segments: result.segments,
+    text: result.text,
+    shots: captured,
+    shotsDirName,
+  });
 }
 
 // Writes <input name>.<format> into outputDir (or next to the source if unset); never overwrites.
@@ -420,7 +445,8 @@ function ts(sec, sep) {
   return `${h}:${m}:${s}${sep}${f}`;
 }
 
-function format(kind, result) {
+function format(kind, result, sourcePath) {
+  if (kind === 'md') return buildMd(sourcePath, result, [], ''); // manual save: text only, no images
   if (kind === 'txt') return result.text + '\n';
   if (kind === 'srt')
     return result.segments.map((s, i) => `${i + 1}\n${ts(s.start, ',')} --> ${ts(s.end, ',')}\n${s.text}\n`).join('\n');
@@ -436,7 +462,7 @@ ipcMain.handle('export', async (_e, { sourcePath, kind, result }) => {
     filters: [{ name: kind.toUpperCase(), extensions: [kind] }],
   });
   if (canceled || !filePath) return null;
-  await fs.promises.writeFile(filePath, format(kind, result), 'utf8');
+  await fs.promises.writeFile(filePath, format(kind, result, sourcePath), 'utf8');
   return filePath;
 });
 

@@ -11,12 +11,14 @@ Drag-and-drop local transcription for audio and video files. An Electron front e
   - **Stop** cancels the current file and everything still queued
   - **Reset** stops and clears the whole list
 - Drop whole folders: media files are found recursively and queued in natural order (`Lesson 2` before `Lesson 10`)
-- Autosave as `.txt`, `.srt` or `.vtt`, next to each source file or into a chosen output folder
+- Autosave as `.txt`, `.srt`, `.vtt` or `.md`, next to each source file or into a chosen output folder
+  - `.md` is readable prose: flowing paragraphs with no timestamps (timestamps only mark screenshots, below)
   - With an output folder, a dropped folder's structure is mirrored (`Course/Lesson 1/intro.mp3` → `<out>/Course/Lesson 1/intro.srt`)
   - Existing transcripts are never overwritten (`name (1).srt`), or tick **Skip existing** to resume an interrupted batch
   - `intro.mp3` and `intro.mp4` in the same folder are saved as `intro.mp3.srt` / `intro.mp4.srt`
-- Optional **screenshots** for video files (needs Autosave): stills are saved to `<name>_shots/` and a
-  Markdown transcript `<name>.md` interleaves them with the speech (the `.srt`/`.vtt`/`.txt` is still written too)
+- Optional **screenshots** for video files (needs Autosave with the `.md` format): stills are saved to
+  `<name>_shots/` and `<name>.md` places each one, with a `[hh:mm:ss]` marker, between the sentences being
+  spoken at that moment
   - **Slides**: capture on big visual changes. **Screen recording**: also on smaller ones (menus, dialogs, new
     windows; a single added line of text is below the threshold), plus a once-a-minute safety net that only fires
     if something subtle changed. **Every N seconds**: fixed interval.
@@ -24,8 +26,9 @@ Drag-and-drop local transcription for audio and video files. An Electron front e
     Images are JPEGs, at most 1600 px wide.
   - A capture is skipped if the screen is back to something already captured (a popup closing, revisiting an
     earlier slide), so the same picture is not repeated
-  - Each image is placed just before the passage being spoken when it was captured
-  - Audio-only files are unaffected. Analysis runs on the CPU while the GPU transcribes
+  - Each image goes at the start of the sentence being spoken when it was captured (sentence timing within a
+    long Whisper segment is estimated from text length)
+  - Audio-only files get a plain `.md`. Analysis runs on the CPU while the GPU transcribes
   - The sensitivity presets are untuned starting points (see `PRESETS` in `src/screenshots.js`); constantly
     moving video (e.g. a webcam feed) will trigger a capture roughly every 10 s
 - Bundled ffmpeg converts any audio/video input

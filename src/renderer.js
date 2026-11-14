@@ -36,7 +36,9 @@ function syncFormats() {
   $('formats').disabled = !on;
   $('outdir').disabled = !on;
   $('skipExisting').disabled = !on;
-  $('shotsRow').disabled = !on; // screenshots need an autosave destination
+  // Screenshots live in the Markdown transcript, so they need Autosave and the .md format.
+  const md = document.querySelector('input[name=format]:checked')?.value === 'md';
+  $('shotsRow').disabled = !on || !md;
   $('shotMode').disabled = !on || !$('screenshots').checked;
   $('shotInterval').disabled = $('shotMode').disabled;
   $('intervalWrap').hidden = $('shotMode').value !== 'interval';
@@ -254,8 +256,7 @@ async function pump() {
       job.bar.className = 'bar done';
       job.bar.firstChild.style.width = '';
       if (res.saveError) addLine(job, 'err', 'Autosave failed: ' + res.saveError);
-      else if (res.savedTo) addLine(job, 'saved', 'Saved → ' + res.savedTo);
-      if (res.mdPath) addLine(job, 'saved', `Markdown (${res.shotCount} screenshots) → ${res.mdPath}`);
+      else if (res.savedTo) addLine(job, 'saved', 'Saved → ' + res.savedTo + (res.shotCount ? ` (${res.shotCount} screenshots)` : ''));
       if (res.shotsError) addLine(job, 'err', 'Screenshots failed: ' + res.shotsError);
       renderResult(job, res, batchTotal === 1);
     }
@@ -303,7 +304,7 @@ function buildText(res) {
 function renderResult(job, res, openNow) {
   const actions = document.createElement('div');
   actions.className = 'actions';
-  for (const kind of ['txt', 'srt', 'vtt']) {
+  for (const kind of ['txt', 'srt', 'vtt', 'md']) {
     const b = document.createElement('button');
     b.textContent = 'Save .' + kind;
     b.onclick = async () => {

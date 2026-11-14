@@ -202,28 +202,80 @@ function mdLink(...parts) {
   return parts.map((s) => encodeURIComponent(s).replace(/\(/g, '%28').replace(/\)/g, '%29')).join('/');
 }
 
-// A screenshot at time t goes just before the segment that is being spoken at t (or the next one),
-// so each image heads the passage it illustrates.
-function buildMarkdown({ title, sourceName, segments, text, shots, shotsDirName }) {
-  const lines = [`# ${title}`, '', `Source: \`${sourceName}\``, ''];
-  const sorted = [...shots].sort((a, b) => a.t - b.t);
-  let i = 0;
-  const emitUpTo = (limit) => {
-    while (i < sorted.length && sorted[i].t < limit) {
-      const s = sorted[i++];
-      lines.push(`![${hms(s.t)}](${mdLink(shotsDirName, s.name)})`, '');
+const SENTENCE_END = /[.!?…]["')\]]*\s*$/;
+
+// Whisper sometimes returns one long segment spanning many sentences, which would bunch every image
+// in that stretch together. Split segments into sentences and spread each segment's time across
+// them in proportion to length, so images can land between sentences.
+function toUnits(segments) {
+  const units = [];
+  for (const g of segments) {
+    const parts = g.text.split(/(?<=[.!?…]["')\]]*)\s+(?=\S)/).filter(Boolean);
+    if (parts.length <= 1) {
+      units.push(g);
+      continue;
     }
-  };
-  if (segments.length) {
-    for (const seg of segments) {
-      emitUpTo(seg.end);
-      lines.push(`**[${hms(seg.start)}]** ${seg.text}`, '');
+    const total = parts.reduce((n, p) => n + p.length, 0);
+    let acc = 0;
+    for (const text of parts) {
+      const start = g.start + ((g.end - g.start) * acc) / total;
+      acc += text.length;
+      units.push({ start, end: g.start + ((g.end - g.start) * acc) / total, text });
     }
-  } else if (text) {
-    lines.push(text, '');
   }
-  emitUpTo(Infinity);
-  return lines.join('\n');
+  return units;
+}
+
+// Markdown transcript as flowing paragraphs: no per-line timestamps, only a timestamp marker above
+// each screenshot. A screenshot goes before the segment being spoken when it was taken, moved back
+// (at most 3 segments) to the start of that sentence so an image never splits a sentence in two.
+// Paragraphs break at images, at pauses over 2 s, and at a sentence end once ~700 characters long.
+function buildMarkdown({ title, sourceName, segments: rawSegments, text, shots, shotsDirName }) {
+  const segments = toUnits(rawSegments);
+  const out = [`# ${title}`, '', `Source: \`${sourceName}\``, ''];
+  const sorted = [...shots].sort((a, b) => a.t - b.t);
+  const imageLines = (s) => [
+    `**[${hms(s.t)}]**`, '', `![${hms(s.t)}](${mdLink(shotsDirName, s.name)})`, '',
+  ];
+
+  if (!segments.length) {
+    if (text) out.push(text, '');
+    for (const s of sorted) out.push(...imageLines(s));
+    return out.join('\n');
+  }
+
+  const at = new Map(); // segment index -> screenshots to place before it
+  let floor = 0; // keeps images in time order after snapping back
+  for (const s of sorted) {
+    let i = segments.findIndex((g) => g.end > s.t);
+    if (i < 0) i = segments.length;
+    for (let back = 0; i > floor && back < 3 && !SENTENCE_END.test(segments[i - 1].text); back++) i--;
+    floor = i;
+    if (!at.has(i)) at.set(i, []);
+    at.get(i).push(s);
+  }
+
+  let para = [];
+  let len = 0;
+  const flush = () => {
+    if (para.length) out.push(para.join(' '), '');
+    para = [];
+    len = 0;
+  };
+  segments.forEach((g, i) => {
+    const prev = segments[i - 1];
+    if (at.has(i)) {
+      flush();
+      for (const s of at.get(i)) out.push(...imageLines(s));
+    } else if (prev && (g.start - prev.end > 2 || (len > 700 && SENTENCE_END.test(prev.text)))) {
+      flush();
+    }
+    para.push(g.text);
+    len += g.text.length + 1;
+  });
+  flush();
+  for (const s of at.get(segments.length) || []) out.push(...imageLines(s));
+  return out.join('\n');
 }
 
 module.exports = { PRESETS, probe, planInterval, planScene, captureShots, buildMarkdown, hms };

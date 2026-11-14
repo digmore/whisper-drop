@@ -76,6 +76,7 @@
     <label><input type="radio" name="format" value="txt"> .txt</label>
     <label><input type="radio" name="format" value="srt"> .srt</label>
     <label><input type="radio" name="format" value="vtt"> .vtt</label>
+    <label title="Readable text without timestamps; supports screenshots for video"><input type="radio" name="format" value="md"> .md</label>
   </fieldset>
   <fieldset id="outdir">
     <button id="chooseDir" type="button">Output folder…</button>
@@ -85,7 +86,7 @@
 </div>
 <div class="opts">
   <fieldset id="shotsRow">
-    <label title="For video files: save stills into a Markdown transcript with an image folder. Requires Autosave."><input type="checkbox" id="screenshots"> Capture screenshots (video)</label>
+    <label title="For video files: save stills into the Markdown transcript, with an image folder. Requires Autosave and the .md format."><input type="checkbox" id="screenshots"> Capture screenshots (video)</label>
     <select id="shotMode" title="When to take a still">
       <option value="slides">Slides: on big changes</option>
       <option value="screen">Screen recording: on small changes</option>
