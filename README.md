@@ -42,3 +42,7 @@ Set **Backend** to *OpenAI-compatible* and the base URL to your server. The app 
 
 - Progress percentages are only available when the app starts `whisper-server` itself.
 - Settings are stored in the per-user app data folder, not in this repository.
+
+## License
+
+[MIT](LICENSE). whisper.cpp, ffmpeg and the Whisper model weights are separate projects with their own licenses.
