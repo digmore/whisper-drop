@@ -38,6 +38,9 @@
   .opts fieldset { border:0; margin:0; padding:0; display:flex; gap:12px; align-items:center; }
   .opts fieldset:disabled { opacity:.45; }
   .opts { flex-wrap:wrap; }
+  #drop button { margin-top:10px; }
+  #summary { margin:-8px 16px 8px; color:var(--dim); font-size:12px; }
+  .note { color:var(--dim); font-size:13px; padding:6px 2px; }
   #outdir { margin-left:auto; }
   #dirLabel { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
 </style>
@@ -62,7 +65,8 @@
   <input id="baseUrl" size="24" title="Server base URL">
 </header>
 <div class="opts">
-  <label><input type="checkbox" id="autosave"> Autosave next to source file</label>
+  <label><input type="checkbox" id="autosave"> Autosave</label>
+  <label title="Skip files whose transcript already exists, so an interrupted batch can be resumed"><input type="checkbox" id="skipExisting"> Skip existing</label>
   <fieldset id="formats">
     <span>Format:</span>
     <label><input type="radio" name="format" value="txt"> .txt</label>
@@ -75,8 +79,11 @@
     <button id="clearDir" type="button" title="Save next to the source file">Reset</button>
   </fieldset>
 </div>
-<div id="drop">Drop audio or video files here, or click to choose</div>
+<div id="drop">Drop audio/video files or whole folders here, or click to choose files
+  <div><button id="addFolder" type="button">Add folder…</button></div>
+</div>
 <input id="picker" type="file" multiple hidden accept="audio/*,video/*">
+<div id="summary" hidden></div>
 <main id="jobs"></main>
 <script src="renderer.js"></script>
 </body>

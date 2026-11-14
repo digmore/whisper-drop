@@ -7,7 +7,11 @@ Drag-and-drop local transcription for audio and video files. An Electron front e
 
 - Drop files (or click to pick) to queue transcription jobs
 - Per-job progress bar
-- Autosave as `.txt`, `.srt` or `.vtt`, optionally into a chosen output folder (never overwrites existing files)
+- Drop whole folders: media files are found recursively and queued in natural order (`Lesson 2` before `Lesson 10`)
+- Autosave as `.txt`, `.srt` or `.vtt`, next to each source file or into a chosen output folder
+  - With an output folder, a dropped folder's structure is mirrored (`Course/Lesson 1/intro.mp3` → `<out>/Course/Lesson 1/intro.srt`)
+  - Existing transcripts are never overwritten (`name (1).srt`), or tick **Skip existing** to resume an interrupted batch
+  - `intro.mp3` and `intro.mp4` in the same folder are saved as `intro.mp3.srt` / `intro.mp4.srt`
 - Bundled ffmpeg converts any audio/video input
 - Works with whisper.cpp, or any server exposing `/v1/audio/transcriptions`
 
