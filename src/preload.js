@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('api', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (s) => ipcRenderer.invoke('settings:set', s),
   chooseDir: (opts) => ipcRenderer.invoke('dialog:chooseDir', opts),
+  cancel: () => ipcRenderer.invoke('cancel'),
   expand: (paths) => ipcRenderer.invoke('expand', paths),
   transcribe: (args) => ipcRenderer.invoke('transcribe', args),
   exportAs: (args) => ipcRenderer.invoke('export', args),

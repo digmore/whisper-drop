@@ -39,7 +39,11 @@
   .opts fieldset:disabled { opacity:.45; }
   .opts { flex-wrap:wrap; }
   #drop button { margin-top:10px; }
-  #summary { margin:-8px 16px 8px; color:var(--dim); font-size:12px; }
+  #queuebar { display:flex; align-items:center; gap:8px; margin:-8px 16px 10px; color:var(--dim); font-size:12px; }
+  #queuebar[hidden] { display:none; }
+  #queuebar .spacer { flex:1; }
+  #queuebar button:disabled { opacity:.4; cursor:default; border-color:var(--line); }
+  .status.cancelled { color:var(--dim); }
   .note { color:var(--dim); font-size:13px; padding:6px 2px; }
   #outdir { margin-left:auto; }
   #dirLabel { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
@@ -83,7 +87,13 @@
   <div><button id="addFolder" type="button">Add folder…</button></div>
 </div>
 <input id="picker" type="file" multiple hidden accept="audio/*,video/*">
-<div id="summary" hidden></div>
+<div id="queuebar" hidden>
+  <span id="summary"></span>
+  <span class="spacer"></span>
+  <button id="pauseBtn" type="button" title="Finish the current file, then hold the queue">Pause</button>
+  <button id="stopBtn" type="button" title="Cancel the current file and everything still queued">Stop</button>
+  <button id="resetBtn" type="button" title="Stop and clear the whole list">Reset</button>
+</div>
 <main id="jobs"></main>
 <script src="renderer.js"></script>
 </body>

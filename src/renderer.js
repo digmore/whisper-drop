@@ -9,6 +9,11 @@ let batchTotal = 0;
 let batchDone = 0;
 let batchSkipped = 0;
 let batchFailed = 0;
+let batchCancelled = 0;
+let paused = false; // user asked to hold the queue
+let holding = false; // the pump loop is actually waiting at a hold point
+let epoch = 0; // bumped by Reset so a job still unwinding can't touch the fresh list
+const resumeWaiters = [];
 
 // ---- settings ----
 let outputDir = '';
@@ -94,19 +99,73 @@ async function addPaths(paths) {
   const { entries, empty } = await window.api.expand(paths);
   for (const p of empty) note(`No media files found in ${p}`);
   if (!entries.length) return;
-  if (!running && !queue.length) batchTotal = batchDone = batchSkipped = batchFailed = 0; // new batch
+  if (!running && !queue.length) resetCounters(); // new batch
   batchTotal += entries.length;
   for (const e of entries) queue.push(makeJob(e));
   updateSummary();
   pump();
 }
 
-function updateSummary() {
-  const el = $('summary');
-  el.hidden = batchTotal < 2;
-  const extra = [batchSkipped && `${batchSkipped} skipped`, batchFailed && `${batchFailed} failed`].filter(Boolean);
-  el.textContent = `${batchDone} / ${batchTotal} finished` + (extra.length ? ` (${extra.join(', ')})` : '');
+function resetCounters() {
+  batchTotal = batchDone = batchSkipped = batchFailed = batchCancelled = 0;
 }
+
+function updateSummary() {
+  $('queuebar').hidden = batchTotal === 0;
+  const extra = [
+    batchSkipped && `${batchSkipped} skipped`,
+    batchFailed && `${batchFailed} failed`,
+    batchCancelled && `${batchCancelled} cancelled`,
+  ].filter(Boolean);
+  let text = `${batchDone} / ${batchTotal} finished` + (extra.length ? ` (${extra.join(', ')})` : '');
+  if (paused) text += holding ? ' · paused' : ' · pausing after current file…';
+  $('summary').textContent = text;
+  const busy = running || queue.length > 0;
+  $('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+  $('pauseBtn').disabled = !busy && !paused;
+  $('stopBtn').disabled = !busy;
+  $('resetBtn').disabled = batchTotal === 0 && !jobsEl.children.length;
+}
+
+// ---- queue controls ----
+function wakeWaiters() {
+  while (resumeWaiters.length) resumeWaiters.pop()();
+}
+
+$('pauseBtn').addEventListener('click', () => {
+  paused = !paused;
+  if (!paused) wakeWaiters();
+  updateSummary();
+});
+
+// Stop: cancel the file in flight and drop everything still queued. Finished cards stay.
+async function stopAll() {
+  const pending = queue.splice(0);
+  for (const job of pending) {
+    jobs.delete(job.id);
+    job.bar.remove();
+    setStatus(job, 'cancelled', 'cancelled');
+    batchDone++;
+    batchCancelled++;
+  }
+  paused = false;
+  wakeWaiters();
+  if (running) await window.api.cancel(); // the job in flight reports back as cancelled
+  updateSummary();
+}
+$('stopBtn').addEventListener('click', stopAll);
+
+// Reset: stop everything and clear the list and its progress.
+$('resetBtn').addEventListener('click', async () => {
+  if ((running || queue.length) && !confirm('Stop all work and clear the list?')) return;
+  epoch++;
+  await stopAll();
+  queue.length = 0;
+  jobs.clear();
+  jobsEl.replaceChildren();
+  resetCounters();
+  updateSummary();
+});
 
 // ---- jobs ----
 function makeJob(entry) {
@@ -133,16 +192,32 @@ function setStatus(job, text, cls) {
 async function pump() {
   if (running) return;
   running = true;
+  updateSummary();
   while (queue.length) {
+    // Pause takes effect between files: the one in flight always finishes first.
+    while (paused) {
+      holding = true;
+      updateSummary();
+      await new Promise((r) => resumeWaiters.push(r));
+    }
+    holding = false;
+    if (!queue.length) break; // Stop/Reset emptied the queue while we were holding
     const job = queue.shift();
+    const myEpoch = epoch;
     setStatus(job, 'transcribing…', 'running');
     job.el.scrollIntoView({ block: 'nearest' });
+    updateSummary();
     const res = await window.api.transcribe({
       id: job.id, filePath: job.filePath, relDir: job.relDir, outName: job.outName,
     });
+    if (myEpoch !== epoch) continue; // list was reset while this job unwound; discard its result
     jobs.delete(job.id);
     batchDone++;
-    if (!res.ok) {
+    if (res.cancelled) {
+      batchCancelled++;
+      setStatus(job, 'stopped', 'cancelled');
+      job.bar.remove();
+    } else if (!res.ok) {
       batchFailed++;
       setStatus(job, 'failed', 'error');
       job.bar.remove();
@@ -167,6 +242,8 @@ async function pump() {
     updateSummary();
   }
   running = false;
+  holding = false;
+  updateSummary();
 }
 
 function addLine(job, cls, text) {

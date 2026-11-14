@@ -6,7 +6,10 @@ Drag-and-drop local transcription for audio and video files. An Electron front e
 ## Features
 
 - Drop files (or click to pick) to queue transcription jobs
-- Per-job progress bar
+- Per-job progress bar, plus queue controls:
+  - **Pause / Resume** holds the queue after the current file finishes
+  - **Stop** cancels the current file and everything still queued
+  - **Reset** stops and clears the whole list
 - Drop whole folders: media files are found recursively and queued in natural order (`Lesson 2` before `Lesson 10`)
 - Autosave as `.txt`, `.srt` or `.vtt`, next to each source file or into a chosen output folder
   - With an output folder, a dropped folder's structure is mirrored (`Course/Lesson 1/intro.mp3` → `<out>/Course/Lesson 1/intro.srt`)

@@ -36,6 +36,7 @@ const MEDIA_EXT = new Set([
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 let currentJobId = null;
+let activeJob = null; // { id, cancelled, phase, controller, ffmpeg } for the job in flight
 
 function settingsFile() {
   return path.join(app.getPath('userData'), 'settings.json');
@@ -82,7 +83,7 @@ async function isUp(baseUrl) {
   }
 }
 
-async function ensureServer(settings) {
+async function ensureServer(settings, active) {
   if (await isUp(settings.baseUrl)) return { ok: true, started: false };
   if (settings.backend !== 'whispercpp' || !settings.autoStart) {
     return { ok: false, error: `No server responding at ${settings.baseUrl}` };
@@ -109,6 +110,7 @@ async function ensureServer(settings) {
     });
   }
   for (let i = 0; i < 60; i++) {
+    if (active?.cancelled) return { ok: false, error: 'cancelled' };
     if (await isUp(settings.baseUrl)) return { ok: true, started: true };
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -117,13 +119,14 @@ async function ensureServer(settings) {
 
 // ---- audio extraction ----
 
-function extractAudio(input, output) {
+function extractAudio(input, output, active) {
   return new Promise((resolve, reject) => {
     const p = spawn(
       ffmpegPath,
       ['-y', '-i', input, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', output],
       { windowsHide: true }
     );
+    if (active) active.ffmpeg = p;
     let err = '';
     p.stderr.on('data', (d) => (err += d.toString()));
     p.on('error', reject);
@@ -135,7 +138,7 @@ function extractAudio(input, output) {
 
 // ---- transcription ----
 
-async function callServer(settings, wavPath) {
+async function callServer(settings, wavPath, signal) {
   const buf = await fs.promises.readFile(wavPath);
   const form = new FormData();
   form.append('file', new Blob([buf], { type: 'audio/wav' }), 'audio.wav');
@@ -151,7 +154,7 @@ async function callServer(settings, wavPath) {
     url = settings.baseUrl.replace(/\/$/, '') + '/inference';
   }
 
-  const res = await fetch(url, { method: 'POST', body: form });
+  const res = await fetch(url, { method: 'POST', body: form, signal });
   if (!res.ok) throw new Error(`Server returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const json = await res.json();
   const segments = (json.segments || []).map((s) => ({
@@ -250,16 +253,25 @@ ipcMain.handle('transcribe', async (_e, { id, filePath, relDir, outName }) => {
     if (fs.existsSync(t.file)) return { ok: true, skipped: true, savedTo: t.file, segments: [], text: '' };
   }
   const tmp = path.join(os.tmpdir(), `whisper-drop-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
-  const phase = (p) => win?.webContents.send('progress', { id, phase: p, pct: null });
+  const active = { id, cancelled: false, phase: 'starting', controller: new AbortController(), ffmpeg: null };
+  activeJob = active;
+  const phase = (p) => {
+    active.phase = p;
+    win?.webContents.send('progress', { id, phase: p, pct: null });
+  };
   try {
     phase('starting');
-    const srv = await ensureServer(settings);
+    const srv = await ensureServer(settings, active);
+    if (active.cancelled) return { ok: false, cancelled: true };
     if (!srv.ok) throw new Error(srv.error);
     phase('extract');
-    await extractAudio(filePath, tmp);
+    await extractAudio(filePath, tmp, active);
+    if (active.cancelled) return { ok: false, cancelled: true };
     currentJobId = id;
+    active.phase = 'transcribe';
     win?.webContents.send('progress', { id, phase: 'transcribe', pct: 0 });
-    const result = await callServer(settings, tmp);
+    const result = await callServer(settings, tmp, active.controller.signal);
+    if (active.cancelled) return { ok: false, cancelled: true };
     let savedTo = null;
     if (settings.autosave) {
       try {
@@ -270,11 +282,33 @@ ipcMain.handle('transcribe', async (_e, { id, filePath, relDir, outName }) => {
     }
     return { ok: true, ...result, savedTo };
   } catch (err) {
+    if (active.cancelled) return { ok: false, cancelled: true };
     return { ok: false, error: err.message };
   } finally {
     currentJobId = null;
+    if (activeJob === active) activeJob = null;
     fs.promises.unlink(tmp).catch(() => {});
   }
+});
+
+// Stop the job in flight. ffmpeg is killed outright. For transcription, whisper-server does not
+// notice a dropped connection and would keep computing (blocking the next request), so when the
+// app started the server itself it is killed too; it restarts on demand for the next job.
+ipcMain.handle('cancel', async () => {
+  const a = activeJob;
+  if (!a) return false;
+  a.cancelled = true;
+  a.controller.abort();
+  a.ffmpeg?.kill();
+  if (a.phase === 'transcribe' && serverProc) {
+    const p = serverProc;
+    await new Promise((resolve) => {
+      p.once('exit', resolve);
+      p.kill();
+      setTimeout(resolve, 3000);
+    });
+  }
+  return true;
 });
 
 // Writes <input name>.<format> into outputDir (or next to the source if unset); never overwrites.
