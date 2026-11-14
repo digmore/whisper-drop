@@ -1,0 +1,17 @@
+{
+  "name": "whisper-drop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Drag-and-drop local transcription via a Whisper server",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "setup": "powershell -ExecutionPolicy Bypass -File scripts/setup-whisper.ps1"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0"
+  },
+  "devDependencies": {
+    "electron": "^45.3.2"
+  }
+}

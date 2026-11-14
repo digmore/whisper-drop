@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Whisper Drop</title>
+<style>
+  :root { --bg:#14161a; --panel:#1d2026; --line:#2c3038; --fg:#e6e8eb; --dim:#8b919b; --accent:#5b9dff; --err:#ff6b6b; --ok:#5ed39a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, "Segoe UI", sans-serif; display:flex; flex-direction:column; height:100vh; }
+  header { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:15px; margin:0; font-weight:600; margin-right:auto; }
+  select, input { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:inherit; }
+  #drop { margin:16px; border:2px dashed var(--line); border-radius:12px; padding:28px; text-align:center; color:var(--dim); transition:.15s; }
+  #drop.over { border-color:var(--accent); color:var(--fg); background:#1a2433; }
+  main { flex:1; overflow:auto; padding:0 16px 16px; display:flex; flex-direction:column; gap:10px; }
+  .job { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; }
+  .job-head { display:flex; gap:10px; align-items:center; }
+  .name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  .status { font-size:12px; color:var(--dim); }
+  .status.done { color:var(--ok); } .status.error { color:var(--err); }
+  .status.running::before { content:""; display:inline-block; width:8px; height:8px; margin-right:6px; border-radius:50%; background:var(--accent); animation:p 1s infinite; }
+  @keyframes p { 50% { opacity:.25; } }
+  .actions { display:flex; gap:6px; margin-top:8px; }
+  button { background:#262a32; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:4px 10px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  .text { margin-top:8px; max-height:260px; overflow:auto; white-space:pre-wrap; user-select:text; border-top:1px solid var(--line); padding-top:8px; }
+  .seg { display:flex; gap:10px; } .seg time { color:var(--dim); font-variant-numeric:tabular-nums; flex:none; }
+  .err { color:var(--err); margin-top:6px; white-space:pre-wrap; }
+  .bar { height:6px; background:var(--line); border-radius:3px; margin-top:8px; overflow:hidden; }
+  .bar > i { display:block; height:100%; width:0; background:var(--accent); transition:width .3s; }
+  .bar.indet > i { width:35%; animation:slide 1.1s ease-in-out infinite; }
+  .bar.done > i { background:var(--ok); width:100%; }
+  @keyframes slide { 0% { margin-left:-35%; } 100% { margin-left:100%; } }
+  .saved { font-size:12px; color:var(--dim); margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .opts { display:flex; align-items:center; gap:14px; padding:8px 16px; border-bottom:1px solid var(--line); color:var(--dim); }
+  .opts label { display:inline-flex; align-items:center; gap:5px; cursor:pointer; color:var(--fg); }
+  .opts fieldset { border:0; margin:0; padding:0; display:flex; gap:12px; align-items:center; }
+  .opts fieldset:disabled { opacity:.45; }
+  .opts { flex-wrap:wrap; }
+  #outdir { margin-left:auto; }
+  #dirLabel { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Whisper Drop</h1>
+  <label>Language
+    <select id="lang">
+      <option value="auto">Auto-detect</option>
+      <option value="en">English</option><option value="es">Spanish</option><option value="fr">French</option>
+      <option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option>
+      <option value="ja">Japanese</option><option value="zh">Chinese</option>
+    </select>
+  </label>
+  <label>Backend
+    <select id="backend">
+      <option value="whispercpp">whisper.cpp</option>
+      <option value="openai">OpenAI-compatible</option>
+    </select>
+  </label>
+  <input id="baseUrl" size="24" title="Server base URL">
+</header>
+<div class="opts">
+  <label><input type="checkbox" id="autosave"> Autosave next to source file</label>
+  <fieldset id="formats">
+    <span>Format:</span>
+    <label><input type="radio" name="format" value="txt"> .txt</label>
+    <label><input type="radio" name="format" value="srt"> .srt</label>
+    <label><input type="radio" name="format" value="vtt"> .vtt</label>
+  </fieldset>
+  <fieldset id="outdir">
+    <button id="chooseDir" type="button">Output folder…</button>
+    <span id="dirLabel" title=""></span>
+    <button id="clearDir" type="button" title="Save next to the source file">Reset</button>
+  </fieldset>
+</div>
+<div id="drop">Drop audio or video files here, or click to choose</div>
+<input id="picker" type="file" multiple hidden accept="audio/*,video/*">
+<main id="jobs"></main>
+<script src="renderer.js"></script>
+</body>
+</html>

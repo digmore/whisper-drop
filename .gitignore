@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+
+# Downloaded by `npm run setup` (large binaries, fetched from upstream)
+bin/
+models/
+*.bin
+*.gguf
+*.ggml
+
+# Build / packaging output
+dist/
+out/
+release/
+build/
+*.exe
+*.dll
+*.asar
+*.msi
+*.zip
+
+# Media and transcripts used while testing (could be private)
+*.wav
+*.mp3
+*.mp4
+*.mkv
+*.mov
+*.m4a
+*.flac
+*.ogg
+*.webm
+*.srt
+*.vtt
+
+# Secrets and local config
+.env
+.env.*
+*.pem
+*.key
+settings.json
+settings.local.json
+.claude/
+
+# Logs and caches
+*.log
+npm-debug.log*
+.npm/
+.cache/
+.eslintcache
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
