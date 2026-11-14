@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 
 const ffmpegPath = require('ffmpeg-static');
+const shots = require('./screenshots');
 
 const ROOT = path.join(__dirname, '..');
 const SERVER_EXE = path.join(ROOT, 'bin', 'whisper', 'whisper-server.exe');
@@ -25,6 +26,9 @@ const defaults = {
   format: 'srt', // 'txt' | 'srt' | 'vtt' (used by autosave)
   outputDir: '', // '' = next to the source file
   skipExisting: false, // autosave only: skip files whose transcript already exists
+  screenshots: false, // autosave only: capture stills from video files into a Markdown transcript
+  shotMode: 'slides', // 'slides' | 'screen' | 'interval'
+  shotInterval: 30, // seconds, for interval mode
 };
 
 // Extensions picked up when walking a dropped folder. Files dropped explicitly are always accepted.
@@ -126,7 +130,10 @@ function extractAudio(input, output, active) {
       ['-y', '-i', input, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', output],
       { windowsHide: true }
     );
-    if (active) active.ffmpeg = p;
+    if (active) {
+      active.procs.add(p);
+      p.on('close', () => active.procs.delete(p));
+    }
     let err = '';
     p.stderr.on('data', (d) => (err += d.toString()));
     p.on('error', reject);
@@ -248,16 +255,32 @@ function targetFor(sourcePath, kind, outputDir, relDir, outName) {
 
 ipcMain.handle('transcribe', async (_e, { id, filePath, relDir, outName }) => {
   const settings = loadSettings();
+  const send = (phase, pct = null) => win?.webContents.send('progress', { id, phase, pct });
+
+  // Screenshots only apply to files with a real video stream, and need autosave for a destination.
+  let info = null;
+  if (settings.autosave && settings.screenshots) info = await shots.probe(ffmpegPath, filePath).catch(() => null);
+  const doShots = !!info?.hasVideo;
+
   if (settings.autosave && settings.skipExisting) {
     const t = targetFor(filePath, settings.format, settings.outputDir, relDir, outName);
-    if (fs.existsSync(t.file)) return { ok: true, skipped: true, savedTo: t.file, segments: [], text: '' };
+    if (fs.existsSync(t.file)) {
+      // A transcript from an earlier run without screenshots must not block capturing them now.
+      const md = targetFor(filePath, 'md', settings.outputDir, relDir, outName);
+      if (!doShots || fs.existsSync(md.file)) {
+        return { ok: true, skipped: true, savedTo: t.file, segments: [], text: '' };
+      }
+    }
   }
   const tmp = path.join(os.tmpdir(), `whisper-drop-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
-  const active = { id, cancelled: false, phase: 'starting', controller: new AbortController(), ffmpeg: null };
+  const active = {
+    id, cancelled: false, phase: 'starting', controller: new AbortController(),
+    procs: new Set(), transcriptionDone: false, analysisPct: null,
+  };
   activeJob = active;
   const phase = (p) => {
     active.phase = p;
-    win?.webContents.send('progress', { id, phase: p, pct: null });
+    send(p);
   };
   try {
     phase('starting');
@@ -267,20 +290,54 @@ ipcMain.handle('transcribe', async (_e, { id, filePath, relDir, outName }) => {
     phase('extract');
     await extractAudio(filePath, tmp, active);
     if (active.cancelled) return { ok: false, cancelled: true };
+
+    // Decide capture times on the CPU while the GPU transcribes. Stills are only written afterwards.
+    let plan = null;
+    if (doShots) {
+      const onProgress = (pct) => {
+        active.analysisPct = pct;
+        if (active.transcriptionDone && !active.cancelled) send('analyze', pct);
+      };
+      plan = (async () =>
+        settings.shotMode === 'interval'
+          ? shots.planInterval(info.duration, Math.max(5, Number(settings.shotInterval) || 30))
+          : shots.planScene(
+              ffmpegPath, filePath, info.duration,
+              shots.PRESETS[settings.shotMode] || shots.PRESETS.slides, active, onProgress
+            ))();
+      plan.catch(() => {}); // surfaced when awaited below; avoids an unhandled rejection meanwhile
+    }
+
     currentJobId = id;
     active.phase = 'transcribe';
-    win?.webContents.send('progress', { id, phase: 'transcribe', pct: 0 });
+    send('transcribe', 0);
     const result = await callServer(settings, tmp, active.controller.signal);
     if (active.cancelled) return { ok: false, cancelled: true };
-    let savedTo = null;
+    active.transcriptionDone = true;
+    active.phase = 'shots';
+
+    const out = { ok: true, ...result, savedTo: null };
     if (settings.autosave) {
       try {
-        savedTo = await autosave(filePath, settings.format, result, settings.outputDir, relDir, outName);
+        out.savedTo = await autosave(
+          filePath, settings.format, result, settings.outputDir, relDir, outName, settings.skipExisting
+        );
       } catch (e) {
-        return { ok: true, ...result, saveError: e.message };
+        out.saveError = e.message;
       }
     }
-    return { ok: true, ...result, savedTo };
+    if (doShots) {
+      try {
+        send('analyze', active.analysisPct);
+        const times = await plan;
+        if (active.cancelled) return { ok: false, cancelled: true };
+        Object.assign(out, await writeShotsAndMarkdown(filePath, result, times, settings, relDir, outName, active, send));
+      } catch (e) {
+        if (active.cancelled) return { ok: false, cancelled: true };
+        out.shotsError = e.message;
+      }
+    }
+    return out;
   } catch (err) {
     if (active.cancelled) return { ok: false, cancelled: true };
     return { ok: false, error: err.message };
@@ -299,7 +356,7 @@ ipcMain.handle('cancel', async () => {
   if (!a) return false;
   a.cancelled = true;
   a.controller.abort();
-  a.ffmpeg?.kill();
+  for (const p of a.procs) p.kill();
   if (a.phase === 'transcribe' && serverProc) {
     const p = serverProc;
     await new Promise((resolve) => {
@@ -311,10 +368,43 @@ ipcMain.handle('cancel', async () => {
   return true;
 });
 
+// Captures the stills, then writes <name>.md next to the other transcripts with the images in
+// <name>_shots/. Both names are made unique together; a failed capture removes the partial folder.
+async function writeShotsAndMarkdown(filePath, result, times, settings, relDir, outName, active, send) {
+  const t = targetFor(filePath, 'md', settings.outputDir, relDir, outName);
+  await fs.promises.mkdir(t.dir, { recursive: true });
+  let base = t.base;
+  const taken = (b) => fs.existsSync(path.join(t.dir, `${b}.md`)) || fs.existsSync(path.join(t.dir, `${b}_shots`));
+  for (let n = 1; taken(base); n++) base = `${t.base} (${n})`;
+  const shotsDirName = `${base}_shots`;
+  const shotsDir = path.join(t.dir, shotsDirName);
+  try {
+    const captured = await shots.captureShots(
+      ffmpegPath, filePath, times, shotsDir, t.base, active, (pct) => send('shots', pct)
+    );
+    const md = shots.buildMarkdown({
+      title: t.base,
+      sourceName: path.basename(filePath),
+      segments: result.segments,
+      text: result.text,
+      shots: captured,
+      shotsDirName,
+    });
+    const mdPath = path.join(t.dir, `${base}.md`);
+    await fs.promises.writeFile(mdPath, md, 'utf8');
+    return { mdPath, shotCount: captured.length };
+  } catch (e) {
+    await fs.promises.rm(shotsDir, { recursive: true, force: true }).catch(() => {});
+    throw e;
+  }
+}
+
 // Writes <input name>.<format> into outputDir (or next to the source if unset); never overwrites.
-async function autosave(sourcePath, kind, result, outputDir, relDir, outName) {
+// With keepExisting (Skip existing) an already-present transcript is reused instead of duplicated.
+async function autosave(sourcePath, kind, result, outputDir, relDir, outName, keepExisting) {
   const t = targetFor(sourcePath, kind, outputDir, relDir, outName);
   await fs.promises.mkdir(t.dir, { recursive: true });
+  if (keepExisting && fs.existsSync(t.file)) return t.file;
   let out = t.file;
   for (let n = 1; fs.existsSync(out); n++) out = path.join(t.dir, `${t.base} (${n}).${kind}`);
   await fs.promises.writeFile(out, format(kind, result), 'utf8');

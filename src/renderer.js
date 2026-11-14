@@ -24,6 +24,9 @@ let outputDir = '';
   $('baseUrl').value = s.baseUrl;
   $('autosave').checked = s.autosave;
   $('skipExisting').checked = s.skipExisting;
+  $('screenshots').checked = s.screenshots;
+  $('shotMode').value = s.shotMode;
+  $('shotInterval').value = s.shotInterval;
   document.querySelector(`input[name=format][value=${s.format}]`).checked = true;
   outputDir = s.outputDir || '';
   syncFormats();
@@ -33,6 +36,10 @@ function syncFormats() {
   $('formats').disabled = !on;
   $('outdir').disabled = !on;
   $('skipExisting').disabled = !on;
+  $('shotsRow').disabled = !on; // screenshots need an autosave destination
+  $('shotMode').disabled = !on || !$('screenshots').checked;
+  $('shotInterval').disabled = $('shotMode').disabled;
+  $('intervalWrap').hidden = $('shotMode').value !== 'interval';
   $('dirLabel').textContent = outputDir || 'next to source file';
   $('dirLabel').title = outputDir;
   $('clearDir').hidden = !outputDir;
@@ -49,16 +56,27 @@ function saveSettings() {
     baseUrl: $('baseUrl').value,
     autosave: $('autosave').checked,
     skipExisting: $('skipExisting').checked,
+    screenshots: $('screenshots').checked,
+    shotMode: $('shotMode').value,
+    shotInterval: Math.max(5, Number($('shotInterval').value) || 30),
     outputDir,
     format: document.querySelector('input[name=format]:checked').value,
   });
   syncFormats();
 }
-for (const id of ['lang', 'backend', 'baseUrl', 'autosave', 'skipExisting']) $(id).addEventListener('change', saveSettings);
+for (const id of ['lang', 'backend', 'baseUrl', 'autosave', 'skipExisting', 'screenshots', 'shotMode', 'shotInterval']) {
+  $(id).addEventListener('change', saveSettings);
+}
 document.querySelectorAll('input[name=format]').forEach((r) => r.addEventListener('change', saveSettings));
 
 // ---- progress ----
-const PHASE_LABEL = { starting: 'starting server…', extract: 'extracting audio…', transcribe: 'transcribing' };
+const PHASE_LABEL = {
+  starting: 'starting server…',
+  extract: 'extracting audio…',
+  transcribe: 'transcribing',
+  analyze: 'analyzing video',
+  shots: 'capturing screenshots',
+};
 window.api.onProgress(({ id, phase, pct }) => {
   const job = jobs.get(id);
   if (!job) return;
@@ -237,6 +255,8 @@ async function pump() {
       job.bar.firstChild.style.width = '';
       if (res.saveError) addLine(job, 'err', 'Autosave failed: ' + res.saveError);
       else if (res.savedTo) addLine(job, 'saved', 'Saved → ' + res.savedTo);
+      if (res.mdPath) addLine(job, 'saved', `Markdown (${res.shotCount} screenshots) → ${res.mdPath}`);
+      if (res.shotsError) addLine(job, 'err', 'Screenshots failed: ' + res.shotsError);
       renderResult(job, res, batchTotal === 1);
     }
     updateSummary();

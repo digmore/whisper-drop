@@ -15,6 +15,16 @@ Drag-and-drop local transcription for audio and video files. An Electron front e
   - With an output folder, a dropped folder's structure is mirrored (`Course/Lesson 1/intro.mp3` → `<out>/Course/Lesson 1/intro.srt`)
   - Existing transcripts are never overwritten (`name (1).srt`), or tick **Skip existing** to resume an interrupted batch
   - `intro.mp3` and `intro.mp4` in the same folder are saved as `intro.mp3.srt` / `intro.mp4.srt`
+- Optional **screenshots** for video files (needs Autosave): stills are saved to `<name>_shots/` and a
+  Markdown transcript `<name>.md` interleaves them with the speech (the `.srt`/`.vtt`/`.txt` is still written too)
+  - **Slides**: capture on big visual changes. **Screen recording**: also on small changes (typing, new windows,
+    plus a safety-net capture every 60 s). **Every N seconds**: fixed interval.
+  - A still is taken once the picture has held still for about a second, so mid-transition frames are skipped;
+    captures are at least 2 s apart. Images are JPEGs, at most 1600 px wide.
+  - Each image is placed just before the passage being spoken when it was captured
+  - Audio-only files are unaffected. Analysis runs on the CPU while the GPU transcribes
+  - The sensitivity presets are untuned starting points (see `PRESETS` in `src/screenshots.js`); constantly
+    moving video (e.g. a webcam feed) will trigger a capture roughly every 10 s
 - Bundled ffmpeg converts any audio/video input
 - Works with whisper.cpp, or any server exposing `/v1/audio/transcriptions`
 

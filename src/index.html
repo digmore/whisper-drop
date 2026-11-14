@@ -83,6 +83,17 @@
     <button id="clearDir" type="button" title="Save next to the source file">Reset</button>
   </fieldset>
 </div>
+<div class="opts">
+  <fieldset id="shotsRow">
+    <label title="For video files: save stills into a Markdown transcript with an image folder. Requires Autosave."><input type="checkbox" id="screenshots"> Capture screenshots (video)</label>
+    <select id="shotMode" title="When to take a still">
+      <option value="slides">Slides: on big changes</option>
+      <option value="screen">Screen recording: on small changes</option>
+      <option value="interval">Every N seconds</option>
+    </select>
+    <label id="intervalWrap" hidden>every <input type="number" id="shotInterval" min="5" step="5" value="30" style="width:64px"> s</label>
+  </fieldset>
+</div>
 <div id="drop">Drop audio/video files or whole folders here, or click to choose files
   <div><button id="addFolder" type="button">Add folder…</button></div>
 </div>
